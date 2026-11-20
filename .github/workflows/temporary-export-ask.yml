@@ -28,7 +28,7 @@ jobs:
             for attempt in $(seq 1 8); do
               tmp="$(mktemp -d)"
               echo "Downloading ${pair}, attempt ${attempt}/8"
-              if npx --yes dukascopy-node -i "${pair}" -from 2023-01-01 -to 2026-11-01 -t m1 -p ask -v -f csv -dir "${tmp}" -fn "${pair}_m1_ask" -r 5 -rp 3000 -re; then
+              if npx --yes dukascopy-node -i "${pair}" -from 2023-01-01 -to 2026-11-01 -t m1 -p ask -v -f csv -dir "${tmp}" -fn "${pair}_m1_ask" -r 5 -rp 3000; then
                 csv="${tmp}/${pair}_m1_ask.csv"
                 if [ -s "${csv}" ] && awk -F, -v end="${end_ms}" 'NR == 1 { if ($0 != "timestamp,open,high,low,close,volume") exit 1; next } NF != 6 || $1 !~ /^[0-9]+$/ || $1 >= end { exit 1 } END { if (NR < 2) exit 1 }' "${csv}"; then
                   gzip -n -c "${csv}" > "${out}"
