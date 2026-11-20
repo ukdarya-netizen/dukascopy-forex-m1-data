@@ -24,7 +24,7 @@ def signal_text(s):
             f'Экспирация: {st["expiry"]} мин\n'
             f'Входить сейчас, ориентир до {dxb(s.t_entry)} (Дубай)\n'
             f'Стратегия: {st["name"]}\n'
-            f'Свеча 5m закрылась {dxb(s.t_close)}, цена {s.price:.5g}, уровень: {LVL.get(int(s.lvl), "-")}')
+            f'Свеча 5m закрылась {dxb(s.t_close)}, цена {round(float(s.price), 5)}, уровень: {LVL.get(int(s.lvl), "-")}')
 
 
 def in_any_window(t_close):
