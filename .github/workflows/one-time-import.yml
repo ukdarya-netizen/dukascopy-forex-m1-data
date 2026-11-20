@@ -1,0 +1,36 @@
+name: One-time Dukascopy data import
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Download and gzip requested instruments
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p export /tmp/forex
+          for pair in eurusd gbpusd usdjpy audusd usdcad usdchf nzdusd eurjpy gbpjpy xauusd; do
+            echo "Downloading $pair"
+            until npx --yes dukascopy-node -i "$pair" -from 2023-01-01 -to 2026-11-01 -t m1 -p bid -utc 0 -v true -f csv -dir /tmp/forex -fn "$pair"_m1 --batch-size 10 --batch-pause 1000 --rate-limit-retries 10 -r 5 -rp 3000; do
+              echo "Retrying $pair after a download error"
+              sleep 30
+            done
+            gzip -c "/tmp/forex/$pair"_m1.csv > "export/$pair"_m1.csv.gz
+            gzip -t "export/$pair"_m1.csv.gz
+          done
+      - name: Commit generated files
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add export/*.csv.gz
+          git commit -m "Add Dukascopy M1 market data"
+          git push
