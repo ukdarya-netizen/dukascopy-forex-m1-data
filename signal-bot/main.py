@@ -1,11 +1,11 @@
 """Telegram signal bot for manual binary-options trading (Pocket Option).
 Run:  python main.py           -> live bot
-      python main.py --check   -> setup check: OANDA + Telegram + signals of the last 5 days found on history (nothing is sent except one test message)
+      python main.py --check   -> setup check: Dukascopy feed + Telegram + signals of the last 5 days found on history (nothing is sent except one test message)
 """
 import os, sys, time, csv, traceback
 from datetime import datetime, timezone, timedelta
 import pandas as pd
-import config, data_oanda, telegram
+import config, data_feed, telegram
 from strategy import scan, STRATEGIES
 
 MIN = 60_000
@@ -52,14 +52,14 @@ class Bot:
 
     def load(self):
         for p in config.PAIRS:
-            self.hist[p] = data_oanda.history(p, config.HISTORY_DAYS)
+            self.hist[p] = data_feed.history(p, config.HISTORY_DAYS)
             print(f'{p}: {len(self.hist[p])} M1 candles', flush=True)
         scan(self.hist[config.PAIRS[0]], config.PAIRS[0])   # warm-up (numba compile) before the first window
 
     def update(self, p, need_ms=None):
         h = self.hist[p]
         start = int(h.timestamp.iloc[-1]) + MIN if len(h) else int(time.time() * 1000) - config.HISTORY_DAYS * 1440 * MIN
-        d = data_oanda.candles(p, start, count=5000)
+        d = data_feed.candles(p, start)
         if not d.empty:
             h = pd.concat([h, d], ignore_index=True).drop_duplicates('timestamp')
             cut = int(time.time() * 1000) - (config.HISTORY_DAYS + 1) * 1440 * MIN
@@ -95,8 +95,8 @@ class Bot:
             if now < t_exp + 15_000:
                 keep.append(s); continue
             try:
-                pe = data_oanda.close_at(s.pair, s.t_entry)
-                px = data_oanda.close_at(s.pair, t_exp)
+                pe = data_feed.close_at(s.pair, s.t_entry)
+                px = data_feed.close_at(s.pair, t_exp)
             except Exception as e:
                 print('result error', e, flush=True); keep.append(s); continue
             if pe is None or px is None:
@@ -113,7 +113,7 @@ class Bot:
             mark = {'WIN': '✅', 'LOSS': '❌', 'TIE': '➖'}.get(res, '?')
             arrow = 'CALL' if s.direction == 1 else 'PUT'
             telegram.send(f'{mark} {res}: {config.DISPLAY[s.pair]} {arrow}, {s.expiry} мин, вход {dxb(s.t_entry)}\n'
-                          f'Цена входа {pe} → экспирация {px} (котировки OANDA)')
+                          f'Цена входа {pe} → экспирация {px} (котировки Dukascopy, mid)')
             save({'date_dubai': day, 'strategy': s.strategy, 'pair': s.pair, 'direction': arrow,
                   'candle_close_dubai': dxb(s.t_close), 'entry_dubai': dxb(s.t_entry), 'expiry_min': s.expiry,
                   'signal_price': s.price, 'entry_price': pe, 'expiry_price': px, 'result': res, 'level': LVL.get(int(s.lvl), '-')})
@@ -154,11 +154,11 @@ class Bot:
 
 
 def check():
-    print('OANDA env:', config.OANDA_ENV, '| pairs:', config.PAIRS, '| strategies:', config.ENABLED)
+    print('pairs:', config.PAIRS, '| strategies:', config.ENABLED)
     telegram.send('Проверка связи: бот видит этот чат.')
     rows = []
     for p in config.PAIRS:
-        h = data_oanda.history(p, config.HISTORY_DAYS + 5)
+        h = data_feed.history(p, config.HISTORY_DAYS + 5)
         last = dxb(int(h.timestamp.iloc[-1]), '%Y-%m-%d %H:%M') if len(h) else '-'
         print(f'{p}: {len(h)} M1 candles, last {last} Dubai', flush=True)
         s = scan(h, p)
@@ -176,8 +176,6 @@ def check():
 
 
 if __name__ == '__main__':
-    if not config.OANDA_TOKEN:
-        sys.exit('OANDA_TOKEN is not set (Replit -> Secrets)')
     if '--check' in sys.argv:
         check()
     else:
