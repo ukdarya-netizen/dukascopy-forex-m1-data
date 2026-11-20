@@ -1,0 +1,78 @@
+name: Temporary Dukascopy ask M1 export
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install browser for Dukascopy WAF recovery
+        run: npx --yes dukascopy-node --install-browser
+      - name: Download and compress ask candles
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p export_ask
+          pairs=(eurusd gbpusd usdjpy audusd usdcad usdchf nzdusd eurjpy gbpjpy xauusd)
+          end_ms=1793491200000
+          for pair in "${pairs[@]}"; do
+            out="export_ask/${pair}_m1_ask.csv.gz"
+            success=false
+            for attempt in $(seq 1 8); do
+              tmp="$(mktemp -d)"
+              echo "Downloading ${pair}, attempt ${attempt}/8"
+              if npx --yes dukascopy-node -i "${pair}" -from 2023-01-01 -to 2026-11-01 -t m1 -p ask -v -f csv -dir "${tmp}" -fn "${pair}_m1_ask" -r 5 -rp 3000 -re; then
+                csv="${tmp}/${pair}_m1_ask.csv"
+                if [ -s "${csv}" ] && awk -F, -v end="${end_ms}" 'NR == 1 { if ($0 != "timestamp,open,high,low,close,volume") exit 1; next } NF != 6 || $1 !~ /^[0-9]+$/ || $1 >= end { exit 1 } END { if (NR < 2) exit 1 }' "${csv}"; then
+                  gzip -n -c "${csv}" > "${out}"
+                  if gzip -t "${out}"; then
+                    echo "Downloaded ${pair}: $(wc -l < "${csv}") CSV lines"
+                    rm -rf "${tmp}"
+                    success=true
+                    break
+                  fi
+                fi
+              fi
+              rm -rf "${tmp}"
+              echo "${pair} attempt ${attempt} failed; retrying" >&2
+              sleep $((attempt * 10))
+            done
+            if [ "${success}" != true ]; then
+              echo "FAILED_PAIR=${pair}; attempts=8; inspect the preceding Dukascopy errors" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: export-ask
+          path: export_ask/*.csv.gz
+          if-no-files-found: error
+          retention-days: 1
+  commit:
+    needs: download
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: export-ask
+          path: export_ask
+      - name: Commit only export_ask files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add export_ask/*.csv.gz
+          git diff --cached --quiet && { echo 'No new export_ask files to commit'; exit 1; }
+          git commit -m "Add Dukascopy ask M1 historical data"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
