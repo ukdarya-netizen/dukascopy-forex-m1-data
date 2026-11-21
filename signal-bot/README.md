@@ -26,7 +26,7 @@
 
 Необязательные:
 - `PAIRS` — пары через запятую, по умолчанию все 10: `eurusd,gbpusd,usdjpy,audusd,usdcad,usdchf,nzdusd,eurjpy,gbpjpy,xauusd`
-- `STRATEGIES` — `MORNING,DAY` (можно оставить одну)
+- `STRATEGIES` — по умолчанию только `MORNING` (утро 06–07). Дневную можно включить: `MORNING,DAY`
 
 ## Запуск
 ```
