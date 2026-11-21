@@ -31,6 +31,7 @@
 ## Запуск
 ```
 pip install -r requirements.txt
+python main.py --chat-id # показать id чатов, где бота запустили (/start) или куда добавили админом
 python main.py --check   # проверка: фид Dukascopy и Telegram + сигналы последних 5 дней на истории
 python main.py           # живой режим
 ```

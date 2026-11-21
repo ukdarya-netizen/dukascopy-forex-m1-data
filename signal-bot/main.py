@@ -4,8 +4,10 @@ Run:  python main.py           -> live bot
 """
 import os, sys, time, csv, traceback
 from datetime import datetime, timezone, timedelta
+import logging
 import pandas as pd
 import config, data_feed, telegram
+logging.getLogger('dukascopy').setLevel(logging.WARNING)
 from strategy import scan, STRATEGIES
 
 MIN = 60_000
@@ -206,7 +208,7 @@ def check():
         h = data_feed.history(p, config.HISTORY_DAYS + 5)
         last = dxb(int(h.timestamp.iloc[-1]), '%Y-%m-%d %H:%M') if len(h) else '-'
         print(f'{p}: {len(h)} M1 candles, last {last} Dubai', flush=True)
-        s = scan(h, p)
+        s = scan(h, p, only=config.ENABLED)
         if not s.empty:
             s = s[s.t_close >= int(time.time() * 1000) - 5 * 1440 * MIN]
             rows.append(s)
@@ -220,8 +222,27 @@ def check():
         print('\nNo signals in the last 5 days.')
 
 
+def chat_ids():
+    """Show chats that wrote to the bot (write /start to the bot or post in the group/channel first)."""
+    import requests
+    r = requests.get(f'https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/getUpdates', timeout=15).json()
+    if not r.get('ok'):
+        print('Telegram error:', r); return
+    seen = {}
+    for u in r.get('result', []):
+        m = u.get('message') or u.get('channel_post') or u.get('my_chat_member') or {}
+        c = m.get('chat')
+        if c: seen[c['id']] = (c.get('type'), c.get('title') or c.get('username') or c.get('first_name'))
+    if not seen:
+        print('No chats yet: write /start to the bot (or post in the group/channel where the bot is admin) and run again.')
+    for cid, (tp, name) in seen.items():
+        print(f'TELEGRAM_CHAT_ID = {cid}   ({tp}: {name})')
+
+
 if __name__ == '__main__':
-    if '--check' in sys.argv:
+    if '--chat-id' in sys.argv:
+        chat_ids()
+    elif '--check' in sys.argv:
         check()
     else:
         Bot().run()
