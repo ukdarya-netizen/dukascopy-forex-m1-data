@@ -144,7 +144,34 @@ class Bot:
                   'signal_price': s.price, 'entry_price': pe, 'expiry_price': px, 'pips': pp, 'result': res, 'level': LVL.get(int(s.lvl), '-')})
         self.pending = keep
 
+    def status(self):
+        now = int(time.time() * 1000)
+        last = {p: (dxb(int(h.timestamp.iloc[-1]) + MIN, '%Y-%m-%d %H:%M') if len(h) else None) for p, h in list(self.hist.items())}
+        return {'bot': 'running', 'now_dubai': dxb(now, '%Y-%m-%d %H:%M:%S'), 'strategies': config.ENABLED,
+                'pairs_loaded': len(self.hist), 'last_candle_close_dubai': last, 'signals_waiting_result': len(self.pending)}
+
+    def serve_status(self):
+        """Tiny HTTP server on $PORT: lets the bot run as the project's web/API artifact (health check) and shows its status."""
+        import json, threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        bot = self
+
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps(bot.status(), ensure_ascii=False, indent=1).encode()
+                self.send_response(200); self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        port = int(os.environ.get('PORT', '8080'))
+        srv = ThreadingHTTPServer(('0.0.0.0', port), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        print(f'status server on port {port}', flush=True)
+
     def run(self):
+        self.serve_status()                     # first, so the deployment health check passes while history loads
         telegram.send('Бот запущен. Окна: ' + ', '.join(STRATEGIES[k]['name'] for k in config.ENABLED) + ' (время Дубая).')
         self.load()
         while True:
