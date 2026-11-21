@@ -3,7 +3,16 @@ import config
 
 
 def send(text):
-    """Plain text only (no HTML / Markdown parse mode)."""
+    """Plain text only (no HTML / Markdown parse mode). Long texts are split at line breaks (Telegram limit 4096)."""
+    if len(text) > 4000:
+        chunk = ''
+        for line in text.split('\n'):
+            if len(chunk) + len(line) + 1 > 4000:
+                send(chunk); chunk = ''
+            chunk += line + '\n'
+        if chunk.strip():
+            send(chunk.rstrip('\n'))
+        return
     if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
         print('[telegram disabled]\n' + text, flush=True)
         return

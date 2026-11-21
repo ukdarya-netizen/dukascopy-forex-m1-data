@@ -24,14 +24,21 @@ def signal_text(s):
             f'Экспирация: {st["expiry"]} мин\n'
             f'Входить сейчас, ориентир до {dxb(s.t_entry)} (Дубай)\n'
             f'Стратегия: {st["name"]}\n'
-            f'Свеча 5m закрылась {dxb(s.t_close)}, цена {round(float(s.price), 5)}, уровень: {LVL.get(int(s.lvl), "-")}')
+            f'Свеча {st["tf"]}m закрылась {dxb(s.t_close)}, цена {round(float(s.price), 5)}, уровень: {LVL.get(int(s.lvl), "-")}')
 
 
-def in_any_window(t_close):
+def due_strategies(t_close):
+    """Enabled strategies whose candle closes at t_close and whose entry/expiry fit the window."""
     te = t_close + MIN
     um = (te // MIN) % 1440
-    return any(st['start_utc'] <= um and um + st['expiry'] <= st['end_utc']
-               for k, st in STRATEGIES.items() if k in config.ENABLED)
+    return [k for k, st in STRATEGIES.items() if k in config.ENABLED and t_close % (st['tf'] * MIN) == 0
+            and st['start_utc'] <= um and um + st['expiry'] <= st['end_utc']]
+
+
+def read_log():
+    if not os.path.exists(config.SIGNALS_CSV):
+        return pd.DataFrame()
+    return pd.read_csv(config.SIGNALS_CSV, dtype=str)
 
 
 def save(row):
@@ -48,7 +55,7 @@ class Bot:
         self.hist = {}
         self.pending = []       # signals waiting for result
         self.sent = set()
-        self.window_res = {}    # (date, strategy) -> [wins, losses, ties]
+        self.reported = set()   # (date, strategy)
 
     def load(self):
         for p in config.PAIRS:
@@ -65,7 +72,7 @@ class Bot:
             cut = int(time.time() * 1000) - (config.HISTORY_DAYS + 1) * 1440 * MIN
             self.hist[p] = h[h.timestamp >= cut].reset_index(drop=True)
 
-    def on_5m_close(self, t_close):
+    def on_close(self, t_close, due):
         for p in config.PAIRS:
             # make sure the last minute of this candle is in (if the pair had ticks)
             waited = 0
@@ -74,10 +81,10 @@ class Bot:
                 if len(self.hist[p]) and int(self.hist[p].timestamp.iloc[-1]) >= t_close - MIN:
                     break
                 time.sleep(3); waited += 3
-            sig = scan(self.hist[p][self.hist[p].timestamp < t_close], p)
+            sig = scan(self.hist[p][self.hist[p].timestamp < t_close], p, only=due)
             if sig.empty:
                 continue
-            sig = sig[(sig.t_close == t_close) & sig.strategy.isin(config.ENABLED)]
+            sig = sig[(sig.t_close == t_close) & sig.strategy.isin(due)]
             for s in sig.itertuples():
                 key = (s.pair, s.strategy, s.t_close)
                 if key in self.sent:
@@ -106,10 +113,6 @@ class Bot:
             else:
                 res = 'WIN' if (px - pe) * s.direction > 0 else 'LOSS'
             day = dxb(s.t_close, '%Y-%m-%d')
-            wr = self.window_res.setdefault((day, s.strategy), [0, 0, 0])
-            if res == 'WIN': wr[0] += 1
-            elif res == 'LOSS': wr[1] += 1
-            elif res == 'TIE': wr[2] += 1
             mark = {'WIN': '✅', 'LOSS': '❌', 'TIE': '➖'}.get(res, '?')
             arrow = 'CALL' if s.direction == 1 else 'PUT'
             telegram.send(f'{mark} {res}: {config.DISPLAY[s.pair]} {arrow}, {s.expiry} мин, вход {dxb(s.t_entry)}\n'
@@ -119,16 +122,34 @@ class Bot:
                   'signal_price': s.price, 'entry_price': pe, 'expiry_price': px, 'result': res, 'level': LVL.get(int(s.lvl), '-')})
         self.pending = keep
 
-    def window_summaries(self, now_ms):
+    def session_reports(self, now_ms):
+        """Session report (e.g. 07:30 Dubai for 06:00-07:00): number of trades, winrate, every trade."""
         um = (now_ms // MIN) % 1440
         for k, st in STRATEGIES.items():
-            if k not in config.ENABLED or um != st['end_utc'] + 2:   # 2 minutes after window end
+            if k not in config.ENABLED or um != st['report_utc']:
                 continue
             day = dxb(now_ms, '%Y-%m-%d')
-            w, l, t = self.window_res.get((day, k), [0, 0, 0])
-            n = w + l
-            telegram.send(f'Итог окна «{st["name"]}» {day}: {w} WIN / {l} LOSS / {t} TIE'
-                          + (f', винрейт {w / n * 100:.0f}%' if n else ', сигналов не было'))
+            if (day, k) in self.reported:
+                continue
+            self.reported.add((day, k))
+            log = read_log()
+            t = log[(log.date_dubai == day) & (log.strategy == k)] if len(log) else log
+            lines = [f'Отчёт сессии «{st["name"]}» за {day} (время Дубая)']
+            if t.empty:
+                lines.append('Сигналов не было.')
+            else:
+                w = int((t.result == 'WIN').sum()); l = int((t.result == 'LOSS').sum())
+                ti = int((t.result == 'TIE').sum()); nd = int((t.result == 'NO DATA').sum())
+                lines.append(f'Сделок: {len(t)} (WIN {w} / LOSS {l} / TIE {ti}' + (f' / нет данных {nd}' if nd else '') + ')')
+                lines.append(f'Винрейт: {w / (w + l) * 100:.0f}%' if w + l else 'Винрейт: -')
+                lines.append('')
+                for r in t.sort_values('entry_dubai').itertuples():
+                    lines.append(f'{r.entry_dubai} {config.DISPLAY.get(r.pair, r.pair)} {r.direction} {r.expiry_min} мин — '
+                                 f'{r.result} ({r.entry_price} → {r.expiry_price})')
+            open_ = [x for x in self.pending if x.strategy == k]
+            if open_:
+                lines.append(f'Ещё без результата: {len(open_)}')
+            telegram.send('\n'.join(lines))
 
     def run(self):
         telegram.send('Бот запущен. Окна: ' + ', '.join(STRATEGIES[k]['name'] for k in config.ENABLED) + ' (время Дубая).')
@@ -139,13 +160,14 @@ class Bot:
                 nxt = (int(now // 60) + 1) * 60 + config.CANDLE_WAIT_SEC
                 time.sleep(max(0, nxt - now))
                 t_min = int((nxt - config.CANDLE_WAIT_SEC) * 1000)    # just-closed minute boundary
-                if (t_min // MIN) % 5 == 0 and in_any_window(t_min):
-                    self.on_5m_close(t_min)
+                due = due_strategies(t_min)
+                if due:
+                    self.on_close(t_min, due)
                 elif (t_min // MIN) % 5 == 0:
                     for p in config.PAIRS:
                         self.update(p)
                 self.check_results()
-                self.window_summaries(t_min)
+                self.session_reports(t_min)
             except Exception:
                 err = traceback.format_exc()
                 print(err, flush=True)
