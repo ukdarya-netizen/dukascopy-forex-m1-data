@@ -27,6 +27,19 @@ def signal_text(s):
             f'Свеча {st["tf"]}m закрылась {dxb(s.t_close)}, цена {round(float(s.price), 5)}, уровень: {LVL.get(int(s.lvl), "-")}')
 
 
+def pips(pair, pe, px, direction):
+    """Signed distance entry -> expiry in pips: + in favour of the trade, - against."""
+    if pe is None or px is None:
+        return None
+    return round((px - pe) * direction / config.PIP[pair], 1)
+
+
+def fmt_pips(v):
+    if v is None or v != v:
+        return '- п.'
+    return f'{v:+.1f} п.'
+
+
 def due_strategies(t_close):
     """Enabled strategies whose candle closes at t_close and whose entry/expiry fit the window."""
     te = t_close + MIN
@@ -44,6 +57,11 @@ def read_log():
 def save(row):
     os.makedirs(config.DATA_DIR, exist_ok=True)
     new = not os.path.exists(config.SIGNALS_CSV)
+    if not new:   # older log without some columns (e.g. pips) -> upgrade header in place
+        old = pd.read_csv(config.SIGNALS_CSV, dtype=str)
+        if list(old.columns) != list(row.keys()):
+            old = old.reindex(columns=list(row.keys()))
+            old.to_csv(config.SIGNALS_CSV, index=False)
     with open(config.SIGNALS_CSV, 'a', newline='') as f:
         w = csv.DictWriter(f, fieldnames=list(row.keys()))
         if new: w.writeheader()
@@ -115,11 +133,12 @@ class Bot:
             day = dxb(s.t_close, '%Y-%m-%d')
             mark = {'WIN': '✅', 'LOSS': '❌', 'TIE': '➖'}.get(res, '?')
             arrow = 'CALL' if s.direction == 1 else 'PUT'
+            pp = pips(s.pair, pe, px, s.direction)
             telegram.send(f'{mark} {res}: {config.DISPLAY[s.pair]} {arrow}, {s.expiry} мин, вход {dxb(s.t_entry)}\n'
-                          f'Цена входа {pe} → экспирация {px} (котировки Dukascopy, mid)')
+                          f'Цена входа {pe} → экспирация {px}, разница {fmt_pips(pp)} (котировки Dukascopy, mid)')
             save({'date_dubai': day, 'strategy': s.strategy, 'pair': s.pair, 'direction': arrow,
                   'candle_close_dubai': dxb(s.t_close), 'entry_dubai': dxb(s.t_entry), 'expiry_min': s.expiry,
-                  'signal_price': s.price, 'entry_price': pe, 'expiry_price': px, 'result': res, 'level': LVL.get(int(s.lvl), '-')})
+                  'signal_price': s.price, 'entry_price': pe, 'expiry_price': px, 'pips': pp, 'result': res, 'level': LVL.get(int(s.lvl), '-')})
         self.pending = keep
 
     def session_reports(self, now_ms):
@@ -144,8 +163,12 @@ class Bot:
                 lines.append(f'Винрейт: {w / (w + l) * 100:.0f}%' if w + l else 'Винрейт: -')
                 lines.append('')
                 for r in t.sort_values('entry_dubai').itertuples():
+                    try:
+                        pv = float(r.pips)
+                    except (AttributeError, TypeError, ValueError):
+                        pv = None
                     lines.append(f'{r.entry_dubai} {config.DISPLAY.get(r.pair, r.pair)} {r.direction} {r.expiry_min} мин — '
-                                 f'{r.result} ({r.entry_price} → {r.expiry_price})')
+                                 f'{r.result} {fmt_pips(pv)} ({r.entry_price} → {r.expiry_price})')
             open_ = [x for x in self.pending if x.strategy == k]
             if open_:
                 lines.append(f'Ещё без результата: {len(open_)}')

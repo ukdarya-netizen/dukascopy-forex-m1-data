@@ -16,6 +16,8 @@ CANDLE_MAX_WAIT_SEC = 20   # max extra wait for a pair's last minute
 DUKA_CODE = {p: f'{p[:3].upper()}-{p[3:].upper()}' for p in ALL_PAIRS}   # dukascopy-python instrument codes
 DISPLAY = {p: f'{p[:3].upper()}/{p[3:].upper()}' for p in ALL_PAIRS}
 DISPLAY['xauusd'] = 'XAU/USD (Gold)'
+PIP = {p: (0.01 if p.endswith('jpy') else 0.0001) for p in ALL_PAIRS}
+PIP['xauusd'] = 0.1      # gold: 1 pip = 0.10 USD
 
 DATA_DIR = os.environ.get('DATA_DIR', 'data')
 SIGNALS_CSV = os.path.join(DATA_DIR, 'signals.csv')
