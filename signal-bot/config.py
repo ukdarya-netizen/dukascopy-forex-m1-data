@@ -18,6 +18,15 @@ DISPLAY = {p: f'{p[:3].upper()}/{p[3:].upper()}' for p in ALL_PAIRS}
 DISPLAY['xauusd'] = 'XAU/USD (Gold)'
 PIP = {p: (0.01 if p.endswith('jpy') else 0.0001) for p in ALL_PAIRS}
 PIP['xauusd'] = 0.1      # gold: 1 pip = 0.10 USD
+DIGITS = {p: (3 if p.endswith('jpy') else 5) for p in ALL_PAIRS}
+DIGITS['xauusd'] = 2
+
+
+def fmt_price(pair, v):
+    try:
+        return f'{float(v):.{DIGITS[pair]}f}'
+    except (TypeError, ValueError):
+        return '-'
 
 DATA_DIR = os.environ.get('DATA_DIR', 'data')
 SIGNALS_CSV = os.path.join(DATA_DIR, 'signals.csv')

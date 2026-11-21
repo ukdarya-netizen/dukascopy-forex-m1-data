@@ -9,6 +9,7 @@ import pandas as pd
 import config, data_feed, telegram
 logging.getLogger('dukascopy').setLevel(logging.WARNING)
 from strategy import scan, STRATEGIES
+from reports import Scheduler
 
 MIN = 60_000
 DXB = timezone(timedelta(hours=4))
@@ -26,7 +27,7 @@ def signal_text(s):
             f'Экспирация: {st["expiry"]} мин\n'
             f'Входить сейчас, ориентир до {dxb(s.t_entry)} (Дубай)\n'
             f'Стратегия: {st["name"]}\n'
-            f'Свеча {st["tf"]}m закрылась {dxb(s.t_close)}, цена {round(float(s.price), 5)}, уровень: {LVL.get(int(s.lvl), "-")}')
+            f'Свеча {st["tf"]}m закрылась {dxb(s.t_close)}, цена {config.fmt_price(s.pair, s.price)}, уровень: {LVL.get(int(s.lvl), "-")}')
 
 
 def pips(pair, pe, px, direction):
@@ -75,7 +76,7 @@ class Bot:
         self.hist = {}
         self.pending = []       # signals waiting for result
         self.sent = set()
-        self.reported = set()   # (date, strategy)
+        self.reports = Scheduler(STRATEGIES, config.ENABLED)
 
     def load(self):
         for p in config.PAIRS:
@@ -137,44 +138,11 @@ class Bot:
             arrow = 'CALL' if s.direction == 1 else 'PUT'
             pp = pips(s.pair, pe, px, s.direction)
             telegram.send(f'{mark} {res}: {config.DISPLAY[s.pair]} {arrow}, {s.expiry} мин, вход {dxb(s.t_entry)}\n'
-                          f'Цена входа {pe} → экспирация {px}, разница {fmt_pips(pp)} (котировки Dukascopy, mid)')
+                          f'Цена входа {config.fmt_price(s.pair, pe)} → экспирация {config.fmt_price(s.pair, px)}, разница {fmt_pips(pp)} (котировки Dukascopy, mid)')
             save({'date_dubai': day, 'strategy': s.strategy, 'pair': s.pair, 'direction': arrow,
                   'candle_close_dubai': dxb(s.t_close), 'entry_dubai': dxb(s.t_entry), 'expiry_min': s.expiry,
                   'signal_price': s.price, 'entry_price': pe, 'expiry_price': px, 'pips': pp, 'result': res, 'level': LVL.get(int(s.lvl), '-')})
         self.pending = keep
-
-    def session_reports(self, now_ms):
-        """Session report (e.g. 07:30 Dubai for 06:00-07:00): number of trades, winrate, every trade."""
-        um = (now_ms // MIN) % 1440
-        for k, st in STRATEGIES.items():
-            if k not in config.ENABLED or um != st['report_utc']:
-                continue
-            day = dxb(now_ms, '%Y-%m-%d')
-            if (day, k) in self.reported:
-                continue
-            self.reported.add((day, k))
-            log = read_log()
-            t = log[(log.date_dubai == day) & (log.strategy == k)] if len(log) else log
-            lines = [f'Отчёт сессии «{st["name"]}» за {day} (время Дубая)']
-            if t.empty:
-                lines.append('Сигналов не было.')
-            else:
-                w = int((t.result == 'WIN').sum()); l = int((t.result == 'LOSS').sum())
-                ti = int((t.result == 'TIE').sum()); nd = int((t.result == 'NO DATA').sum())
-                lines.append(f'Сделок: {len(t)} (WIN {w} / LOSS {l} / TIE {ti}' + (f' / нет данных {nd}' if nd else '') + ')')
-                lines.append(f'Винрейт: {w / (w + l) * 100:.0f}%' if w + l else 'Винрейт: -')
-                lines.append('')
-                for r in t.sort_values('entry_dubai').itertuples():
-                    try:
-                        pv = float(r.pips)
-                    except (AttributeError, TypeError, ValueError):
-                        pv = None
-                    lines.append(f'{r.entry_dubai} {config.DISPLAY.get(r.pair, r.pair)} {r.direction} {r.expiry_min} мин — '
-                                 f'{r.result} {fmt_pips(pv)} ({r.entry_price} → {r.expiry_price})')
-            open_ = [x for x in self.pending if x.strategy == k]
-            if open_:
-                lines.append(f'Ещё без результата: {len(open_)}')
-            telegram.send('\n'.join(lines))
 
     def run(self):
         telegram.send('Бот запущен. Окна: ' + ', '.join(STRATEGIES[k]['name'] for k in config.ENABLED) + ' (время Дубая).')
@@ -192,7 +160,8 @@ class Bot:
                     for p in config.PAIRS:
                         self.update(p)
                 self.check_results()
-                self.session_reports(t_min)
+                for text in self.reports.due(t_min, {x.strategy for x in self.pending}):
+                    telegram.send(text)
             except Exception:
                 err = traceback.format_exc()
                 print(err, flush=True)
