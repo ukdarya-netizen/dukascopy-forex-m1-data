@@ -7,7 +7,7 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 # --- settings ---
 ALL_PAIRS = ['eurusd', 'gbpusd', 'usdjpy', 'audusd', 'usdcad', 'usdchf', 'nzdusd', 'eurjpy', 'gbpjpy', 'xauusd']
 PAIRS = [p.strip().lower() for p in os.environ.get('PAIRS', ','.join(ALL_PAIRS)).split(',') if p.strip()]
-ENABLED = [s.strip().upper() for s in os.environ.get('STRATEGIES', 'MORNING').split(',') if s.strip()]
+ENABLED = [{'MORNING': 'S1'}.get(s.strip().upper(), s.strip().upper()) for s in os.environ.get('BOT_STRATEGIES', 'S1,T1,T2,T3,T4').split(',') if s.strip()]
 
 HISTORY_DAYS = 35          # history kept in memory (needs >= 20 trading days for the ATR average; 30 and 35 days validated identical to the full-history backtest)
 CANDLE_WAIT_SEC = 4        # wait after minute close before polling (let the feed finish the minute)

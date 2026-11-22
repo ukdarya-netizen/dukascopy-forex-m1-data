@@ -20,14 +20,23 @@ def dxb(ms, fmt='%H:%M'):
     return datetime.fromtimestamp(ms / 1000, DXB).strftime(fmt)
 
 
+def strat_label(sid):
+    st = STRATEGIES.get(sid)
+    if st is None:
+        return sid
+    return f'{"🧪 ТЕСТ " if st["test"] else ""}{sid} · {st["name"]}'
+
+
 def signal_text(s):
     st = STRATEGIES[s.strategy]
     arrow = 'CALL ⬆️ (вверх)' if s.direction == 1 else 'PUT ⬇️ (вниз)'
-    return (f'{config.DISPLAY[s.pair]}  {arrow}\n'
+    lvl = f' · уровень: {LVL[int(s.lvl)]}' if int(s.lvl) in LVL else ''
+    return (f'🔔 {strat_label(s.strategy)}\n'
+            f'{config.DISPLAY[s.pair]} — {arrow}\n'
             f'Экспирация: {st["expiry"]} мин\n'
-            f'Входить сейчас, ориентир до {dxb(s.t_entry)} (Дубай)\n'
-            f'Стратегия: {st["name"]}\n'
-            f'Свеча {st["tf"]}m закрылась {dxb(s.t_close)}, цена {config.fmt_price(s.pair, s.price)}, уровень: {LVL.get(int(s.lvl), "-")}')
+            f'Вход: сейчас, до {dxb(s.t_entry)} (Дубай)\n'
+            f'Цена сигнала: {config.fmt_price(s.pair, s.price)}\n'
+            f'Логика: {st["what"]} · свеча {st["tf"]}m закрылась {dxb(s.t_close)}{lvl}')
 
 
 def pips(pair, pe, px, direction):
@@ -48,13 +57,15 @@ def due_strategies(t_close):
     te = t_close + MIN
     um = (te // MIN) % 1440
     return [k for k, st in STRATEGIES.items() if k in config.ENABLED and t_close % (st['tf'] * MIN) == 0
-            and st['start_utc'] <= um and um + st['expiry'] <= st['end_utc']]
+            and st['start_utc'] <= um < st['end_utc'] and um + st['expiry'] <= st['end_utc']]
 
 
 def read_log():
     if not os.path.exists(config.SIGNALS_CSV):
         return pd.DataFrame()
-    return pd.read_csv(config.SIGNALS_CSV, dtype=str)
+    d = pd.read_csv(config.SIGNALS_CSV, dtype=str)
+    d['strategy'] = d.strategy.replace({'MORNING': 'S1'})     # logs written before strategies got ids
+    return d
 
 
 def save(row):
@@ -76,7 +87,7 @@ class Bot:
         self.hist = {}
         self.pending = []       # signals waiting for result
         self.sent = set()
-        self.reports = Scheduler(STRATEGIES, config.ENABLED)
+        self.reports = Scheduler(config.ENABLED)
 
     def load(self):
         for p in config.PAIRS:
@@ -137,8 +148,10 @@ class Bot:
             mark = {'WIN': '✅', 'LOSS': '❌', 'TIE': '➖'}.get(res, '?')
             arrow = 'CALL' if s.direction == 1 else 'PUT'
             pp = pips(s.pair, pe, px, s.direction)
-            telegram.send(f'{mark} {res}: {config.DISPLAY[s.pair]} {arrow}, {s.expiry} мин, вход {dxb(s.t_entry)}\n'
-                          f'Цена входа {config.fmt_price(s.pair, pe)} → экспирация {config.fmt_price(s.pair, px)}, разница {fmt_pips(pp)} (котировки Dukascopy, mid)')
+            telegram.send(f'{mark} {res} · {strat_label(s.strategy)}\n'
+                          f'{config.DISPLAY[s.pair]} {arrow} · экспирация {s.expiry} мин\n'
+                          f'Вход {dxb(s.t_entry)}: {config.fmt_price(s.pair, pe)} → экспирация {dxb(s.t_entry + s.expiry * MIN)}: {config.fmt_price(s.pair, px)}\n'
+                          f'Разница: {fmt_pips(pp)} (котировки Dukascopy, mid)')
             save({'date_dubai': day, 'strategy': s.strategy, 'pair': s.pair, 'direction': arrow,
                   'candle_close_dubai': dxb(s.t_close), 'entry_dubai': dxb(s.t_entry), 'expiry_min': s.expiry,
                   'signal_price': s.price, 'entry_price': pe, 'expiry_price': px, 'pips': pp, 'result': res, 'level': LVL.get(int(s.lvl), '-')})
@@ -172,7 +185,8 @@ class Bot:
 
     def run(self):
         self.serve_status()                     # first, so the deployment health check passes while history loads
-        telegram.send('Бот запущен. Окна: ' + ', '.join(STRATEGIES[k]['name'] for k in config.ENABLED) + ' (время Дубая).')
+        telegram.send('Бот запущен. Стратегии (время Дубая):\n' + '\n'.join(
+            f'{strat_label(k)} · {STRATEGIES[k]["what"]} · {STRATEGIES[k]["tf"]}m · экспирация {STRATEGIES[k]["expiry"]} мин' for k in config.ENABLED))
         self.load()
         while True:
             try:

@@ -1,6 +1,6 @@
-"""DAILY / WEEKLY / MONTHLY reports from data/signals.csv (plain text for Telegram).
+"""DAILY / WEEKLY / MONTHLY reports from data/signals.csv (plain text for Telegram), with statistics per strategy.
 Schedule (Dubai time, UTC+4, no DST):
-  DAILY   - per strategy, at its report time (morning: 07:30), Mon-Fri
+  DAILY   - per session: morning (05-09) at 09:30, evening (21-23) at 23:30, Mon-Fri
   WEEKLY  - Saturday 15:00, Dubai dates Sunday..Saturday of that week
   MONTHLY - 1st of month 06:00, previous calendar month
 A report missed because the bot was down is sent late (within 20 h); sent reports are remembered in data/reports_sent.json."""
@@ -8,6 +8,7 @@ import json, os
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 import config
+from strategy import STRATEGIES, SESSIONS
 
 DXB = timezone(timedelta(hours=4))
 WD = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
@@ -22,6 +23,7 @@ def _load_log():
     d = pd.read_csv(config.SIGNALS_CSV, dtype=str)
     if 'pips' not in d.columns:
         d['pips'] = None
+    d['strategy'] = d.strategy.replace({'MORNING': 'S1'})
     d['pips_f'] = pd.to_numeric(d.pips, errors='coerce')
     return d
 
@@ -44,12 +46,17 @@ def _summary(t):
     return lines, w, l
 
 
+def _slabel(k):
+    st = STRATEGIES.get(k)
+    return f'{k} {st["name"]}{" (тест)" if st["test"] else ""}' if st else k
+
+
 def _line(r, with_date):
     d = ''
     if with_date:
         dt = datetime.strptime(r.date_dubai, '%Y-%m-%d')
         d = f'{dt:%d.%m} {WD[dt.weekday()]} '
-    return (f'{d}{r.entry_dubai} {config.DISPLAY.get(r.pair, r.pair)} {r.direction} {r.expiry_min} мин — '
+    return (f'{d}{r.entry_dubai} [{r.strategy}] {config.DISPLAY.get(r.pair, r.pair)} {r.direction} {r.expiry_min} мин — '
             f'{r.result} {_fp(r.pips_f)} ({config.fmt_price(r.pair, r.entry_price)} → {config.fmt_price(r.pair, r.expiry_price)})')
 
 
@@ -66,14 +73,25 @@ def _group(t, key, label):
     return out
 
 
-def build(kind, t, title_line, strategy_names):
-    lines = [f'{kind} REPORT', title_line, 'Стратегия: ' + ', '.join(strategy_names), '']
+def build(kind, t, title_line, ids):
+    lines = [f'{kind} REPORT', title_line, 'Стратегии: ' + ', '.join(ids), '']
     if t.empty:
         lines.append('Сделок не было.')
         return '\n'.join(lines)
     s, _, _ = _summary(t)
-    lines += s
-    t = t.sort_values(['date_dubai', 'entry_dubai'])
+    lines += ['ИТОГО:'] + s
+    t = t.sort_values(['date_dubai', 'entry_dubai', 'strategy'])
+    lines += ['', 'По стратегиям:']
+    for k in ids:
+        g = t[t.strategy == k]
+        if g.empty:
+            lines.append(f'{_slabel(k)}: сделок не было'); continue
+        w = int((g.result == 'WIN').sum()); l = int((g.result == 'LOSS').sum())
+        wr = f'{w / (w + l) * 100:.0f}%' if w + l else '-'
+        fx = g[g.pair != 'xauusd'].pips_f.sum(); au = g[g.pair == 'xauusd']
+        pp = _fp(fx) if (g.pair != 'xauusd').any() else ''
+        if len(au): pp = (pp + ', ' if pp else '') + f'золото {_fp(au.pips_f.sum())}'
+        lines.append(f'{_slabel(k)}: {len(g)} сд., WIN {w} / LOSS {l}, винрейт {wr}, {pp}')
     if kind in ('WEEKLY', 'MONTHLY'):
         lines += ['', 'По дням:' if kind == 'WEEKLY' else 'По неделям:']
         if kind == 'WEEKLY':
@@ -88,8 +106,8 @@ def build(kind, t, title_line, strategy_names):
 
 
 class Scheduler:
-    def __init__(self, strategies, enabled):
-        self.st = strategies; self.enabled = enabled
+    def __init__(self, enabled):
+        self.enabled = enabled
         self.silent = not os.path.exists(SENT_FILE)   # very first start: don't fire reports for periods before the bot existed
         try:
             self.sent = set(json.load(open(SENT_FILE)))
@@ -105,17 +123,20 @@ class Scheduler:
         """Returns list of report texts to send now."""
         now = datetime.fromtimestamp(now_ms / 1000, DXB).replace(tzinfo=None)
         out = []
-        names = [self.st[k]['name'] for k in self.enabled]
-        # DAILY (per strategy, Mon-Fri)
-        for k in self.enabled:
-            ru = self.st[k]['report_utc']; h, m = divmod((ru + 240) % 1440, 60)
+        # DAILY (per session, Mon-Fri)
+        for sess, sd in SESSIONS.items():
+            ids = [k for k in self.enabled if STRATEGIES[k]['session'] == sess]
+            if not ids:
+                continue
+            h, m = divmod((sd['report_utc'] + 240) % 1440, 60)
             sched = now.replace(hour=h, minute=m, second=0, microsecond=0)
             if sched > now: sched -= timedelta(days=1)
-            key = f'DAILY:{k}:{sched:%Y-%m-%d}'
-            if sched.weekday() < 5 and key not in self.sent and now - sched < timedelta(hours=20) and k not in pending_strategies:
+            key = f'DAILY:{sess}:{sched:%Y-%m-%d}'
+            if sched.weekday() < 5 and key not in self.sent and now - sched < timedelta(hours=20) \
+                    and not any(k in pending_strategies for k in ids):
                 log = _load_log(); day = f'{sched:%Y-%m-%d}'
-                t = log[(log.date_dubai == day) & (log.strategy == k)]
-                out.append(build('DAILY', t, f'{sched:%d.%m.%Y} {WD[sched.weekday()]} (Дубай)', [self.st[k]['name']]))
+                t = log[(log.date_dubai == day) & log.strategy.isin(ids)]
+                out.append(build('DAILY', t, f'{sd["name"]} · {sched:%d.%m.%Y} {WD[sched.weekday()]} (Дубай)', ids))
                 self._mark(key)
         # WEEKLY Saturday 15:00
         sat = now - timedelta(days=(now.weekday() - 5) % 7)
@@ -127,7 +148,7 @@ class Scheduler:
             log = _load_log()
             dd = pd.to_datetime(log.date_dubai).dt.date if len(log) else pd.Series(dtype=object)
             t = log[(dd >= start) & (dd <= end) & log.strategy.isin(self.enabled)] if len(log) else log
-            out.append(build('WEEKLY', t, f'Неделя {start:%d.%m} — {end:%d.%m.%Y} (Дубай)', names))
+            out.append(build('WEEKLY', t, f'Неделя {start:%d.%m} — {end:%d.%m.%Y} (Дубай)', self.enabled))
             self._mark(key)
         # MONTHLY 1st 06:00
         sched = now.replace(day=1, hour=6, minute=0, second=0, microsecond=0)
@@ -137,7 +158,7 @@ class Scheduler:
             prev = (sched - timedelta(days=1)).replace(day=1)
             log = _load_log()
             t = log[log.date_dubai.str.startswith(f'{prev:%Y-%m}') & log.strategy.isin(self.enabled)] if len(log) else log
-            out.append(build('MONTHLY', t, f'{MONTHS[prev.month - 1].capitalize()} {prev.year} (Дубай)', names))
+            out.append(build('MONTHLY', t, f'{MONTHS[prev.month - 1].capitalize()} {prev.year} (Дубай)', self.enabled))
             self._mark(key)
         if self.silent:
             self.silent = False
