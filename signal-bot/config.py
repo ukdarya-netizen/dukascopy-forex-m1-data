@@ -1,6 +1,6 @@
 import os
 
-VERSION = '2026-11-23b (S1 + T1-T5)'
+VERSION = '2026-11-23c (S1 + T1-T7)'
 
 # --- secrets (Replit -> Secrets) ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -9,7 +9,7 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 # --- settings ---
 ALL_PAIRS = ['eurusd', 'gbpusd', 'usdjpy', 'audusd', 'usdcad', 'usdchf', 'nzdusd', 'eurjpy', 'gbpjpy', 'xauusd']
 PAIRS = [p.strip().lower() for p in os.environ.get('PAIRS', ','.join(ALL_PAIRS)).split(',') if p.strip()]
-ENABLED = [{'MORNING': 'S1'}.get(s.strip().upper(), s.strip().upper()) for s in os.environ.get('BOT_STRATEGIES', 'S1,T1,T2,T3,T4,T5').split(',') if s.strip()]
+ENABLED = [{'MORNING': 'S1'}.get(s.strip().upper(), s.strip().upper()) for s in os.environ.get('BOT_STRATEGIES', 'S1,T1,T2,T3,T4,T5,T6,T7').split(',') if s.strip()]
 
 HISTORY_DAYS = 35          # history kept in memory (needs >= 20 trading days for the ATR average; 30 and 35 days validated identical to the full-history backtest)
 CANDLE_WAIT_SEC = 4        # wait after minute close before polling (let the feed finish the minute)

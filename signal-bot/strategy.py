@@ -30,6 +30,10 @@ STRATEGIES = {
                test=True, session='MORNING', f=dict(atr_tf=(1.0, 1.5), atr_h1=(1.5, None))),
     'T5': dict(name='Утро 05–06', what='против пробоя уровня при спокойном рынке', model='LEVEL_BREAK', tf=5, start_utc=60, end_utc=120, expiry=15,
                test=True, session='MORNING', f=dict(atr_tf=(None, 0.75), adx_h1=(None, 20))),
+    'T6': dict(name='Утро 05–07', what='против пробоя inside bar, по тренду H1', model='INSIDE_BAR_BREAK', tf=15, start_utc=60, end_utc=180, expiry=2,
+               test=True, session='MORNING', f=dict(ema50_h1=1)),
+    'T7': dict(name='Утро 05–09', what='разворот от доджи у экстремума при высокой волатильности', model='DOJI_EXTREME', tf=5, start_utc=60, end_utc=300,
+               expiry=5, test=True, session='MORNING', fade=False, f=dict(atr_tf=(1.5, None))),
     'T4': dict(name='Вечер 21–23', what='против пробоя уровня', model='LEVEL_BREAK', tf=3, start_utc=1020, end_utc=1140, expiry=30,
                test=True, session='EVENING', f=dict(atr_tf=(0.5, 0.75), atr_h1=(0.5, 0.75))),
 }
@@ -169,10 +173,20 @@ def scan(m1: pd.DataFrame, pair: str, only=None) -> pd.DataFrame:
             ju = np.where(uk == 2)[0]; jd = np.where(dk == 2)[0]
             j = np.concatenate([ju, jd]); d = np.concatenate([np.ones(len(ju)), -np.ones(len(jd))])
             lt = np.concatenate([ut[ju], dt_[jd]])
-        else:   # IFVG
+        elif s['model'] == 'IFVG':
             fv = fvg_list(O, H, L, C, A, 0.8)
             iv = ifvg_events(C, fv, len(C), 100) if len(fv) else np.zeros((0, 5))
             j = iv[:, 0].astype(np.int64); d = iv[:, 1]; lt = np.zeros(len(j))
+        else:   # candle patterns
+            o_, h_, l_, c_ = (pd.Series(x) for x in (O, H, L, C))
+            if s['model'] == 'INSIDE_BAR_BREAK':
+                inside = (h_.shift() < h_.shift(2)) & (l_.shift() > l_.shift(2))
+                lg = inside & (c_ > h_.shift(2)); sh = inside & (c_ < l_.shift(2))
+            else:   # DOJI_EXTREME
+                rng = h_ - l_; doji = ((c_ - o_).abs() <= 0.1 * rng) & (rng > 0)
+                lg = doji & (l_ <= l_.rolling(10).min()); sh = doji & (h_ >= h_.rolling(10).max())
+            ju = np.where(lg.fillna(False).values)[0]; jd = np.where(sh.fillna(False).values)[0]
+            j = np.concatenate([ju, jd]); d = np.concatenate([np.ones(len(ju)), -np.ones(len(jd))]); lt = np.zeros(len(j))
         if not len(j):
             continue
         te = tc[j] + MIN
@@ -190,7 +204,7 @@ def scan(m1: pd.DataFrame, pair: str, only=None) -> pd.DataFrame:
             m &= st == f['struct_h1']
         if m.any():
             out.append(pd.DataFrame({'pair': pair, 'strategy': sid, 't_close': tc[j[m]], 't_entry': te[m],
-                                     'direction': (-d[m]).astype(int), 'expiry': s['expiry'], 'price': C[j[m]], 'lvl': lt[m]}))
+                                     'direction': ((-d[m]) if s.get('fade', True) else d[m]).astype(int), 'expiry': s['expiry'], 'price': C[j[m]], 'lvl': lt[m]}))
     if not out:
         return pd.DataFrame()
     return pd.concat(out, ignore_index=True).sort_values(['t_close', 'strategy']).reset_index(drop=True)
