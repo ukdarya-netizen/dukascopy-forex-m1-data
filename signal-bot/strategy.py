@@ -28,6 +28,8 @@ STRATEGIES = {
                test=True, session='MORNING', f=dict(struct_h1=-1, ema50_h1=-1)),
     'T3': dict(name='Утро 07–09', what='против IFVG при высокой волатильности', model='IFVG', tf=3, start_utc=180, end_utc=300, expiry=10,
                test=True, session='MORNING', f=dict(atr_tf=(1.0, 1.5), atr_h1=(1.5, None))),
+    'T5': dict(name='Утро 05–06', what='против пробоя уровня при спокойном рынке', model='LEVEL_BREAK', tf=5, start_utc=60, end_utc=120, expiry=15,
+               test=True, session='MORNING', f=dict(atr_tf=(None, 0.75), adx_h1=(None, 20))),
     'T4': dict(name='Вечер 21–23', what='против пробоя уровня', model='LEVEL_BREAK', tf=3, start_utc=1020, end_utc=1140, expiry=30,
                test=True, session='EVENING', f=dict(atr_tf=(0.5, 0.75), atr_h1=(0.5, 0.75))),
 }
