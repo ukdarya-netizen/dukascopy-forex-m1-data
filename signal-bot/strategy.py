@@ -34,10 +34,12 @@ STRATEGIES = {
                test=True, session='MORNING', f=dict(ema50_h1=1)),
     'T7': dict(name='Утро 05–09', what='разворот от доджи у экстремума при высокой волатильности', model='DOJI_EXTREME', tf=5, start_utc=60, end_utc=300,
                expiry=5, test=True, session='MORNING', fade=False, f=dict(atr_tf=(1.5, None))),
+    'T8': dict(name='Вечер 17–21', what='по направлению длинного хвоста (хвост ≥ 1,5 ATR)', model='LONG_WICK', tf=15, start_utc=780, end_utc=1020,
+               expiry=5, test=True, session='EVENING', fade=True, f={}),
     'T4': dict(name='Вечер 21–23', what='против пробоя уровня', model='LEVEL_BREAK', tf=3, start_utc=1020, end_utc=1140, expiry=30,
                test=True, session='EVENING', f=dict(atr_tf=(0.5, 0.75), atr_h1=(0.5, 0.75))),
 }
-SESSIONS = {'MORNING': dict(name='Утро 05–09', report_utc=330), 'EVENING': dict(name='Вечер 21–23', report_utc=1170)}  # reports 09:30 / 23:30 Dubai
+SESSIONS = {'MORNING': dict(name='Утро 05–09', report_utc=330), 'EVENING': dict(name='Вечер 17–23', report_utc=1170)}  # reports 09:30 / 23:30 Dubai
 
 
 def _with_ny(m1: pd.DataFrame) -> pd.DataFrame:
@@ -182,9 +184,13 @@ def scan(m1: pd.DataFrame, pair: str, only=None) -> pd.DataFrame:
             if s['model'] == 'INSIDE_BAR_BREAK':
                 inside = (h_.shift() < h_.shift(2)) & (l_.shift() > l_.shift(2))
                 lg = inside & (c_ > h_.shift(2)); sh = inside & (c_ < l_.shift(2))
-            else:   # DOJI_EXTREME
+            elif s['model'] == 'DOJI_EXTREME':
                 rng = h_ - l_; doji = ((c_ - o_).abs() <= 0.1 * rng) & (rng > 0)
                 lg = doji & (l_ <= l_.rolling(10).min()); sh = doji & (h_ >= h_.rolling(10).max())
+            else:   # LONG_WICK: d = against the wick (lower wick -> +1); fade=True trades WITH the wick
+                rng = h_ - l_; a_ = pd.Series(A)
+                lw = np.minimum(o_, c_) - l_; uw = h_ - np.maximum(o_, c_)
+                lg = (rng > 0) & (lw / rng >= 0.5) & (lw / a_ >= 1.5); sh = (rng > 0) & (uw / rng >= 0.5) & (uw / a_ >= 1.5)
             ju = np.where(lg.fillna(False).values)[0]; jd = np.where(sh.fillna(False).values)[0]
             j = np.concatenate([ju, jd]); d = np.concatenate([np.ones(len(ju)), -np.ones(len(jd))]); lt = np.zeros(len(j))
         if not len(j):
