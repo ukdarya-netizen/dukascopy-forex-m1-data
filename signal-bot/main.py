@@ -36,7 +36,8 @@ def signal_text(s):
             f'Экспирация: {st["expiry"]} мин\n'
             f'Вход: сейчас, до {dxb(s.t_entry)} (Дубай)\n'
             f'Цена сигнала: {config.fmt_price(s.pair, s.price)}\n'
-            f'Логика: {st["what"]} · свеча {st["tf"]}m закрылась {dxb(s.t_close)}{lvl}')
+            f'Логика: {st["what"]} · свеча {st["tf"]}m закрылась {dxb(s.t_close)}{lvl}\n\n'
+            f'#signal #{s.strategy}')
 
 
 def pips(pair, pe, px, direction):
@@ -151,7 +152,8 @@ class Bot:
             telegram.send(f'{mark} {res} · {strat_label(s.strategy)}\n'
                           f'{config.DISPLAY[s.pair]} {arrow} · экспирация {s.expiry} мин\n'
                           f'Вход {dxb(s.t_entry)}: {config.fmt_price(s.pair, pe)} → экспирация {dxb(s.t_entry + s.expiry * MIN)}: {config.fmt_price(s.pair, px)}\n'
-                          f'Разница: {fmt_pips(pp)} (котировки Dukascopy, mid)')
+                          f'Разница: {fmt_pips(pp)} (котировки Dukascopy, mid)\n\n'
+                          f'#result #{s.strategy} #{res.replace(" ", "_").lower()}')
             save({'date_dubai': day, 'strategy': s.strategy, 'pair': s.pair, 'direction': arrow,
                   'candle_close_dubai': dxb(s.t_close), 'entry_dubai': dxb(s.t_entry), 'expiry_min': s.expiry,
                   'signal_price': s.price, 'entry_price': pe, 'expiry_price': px, 'pips': pp, 'result': res, 'level': LVL.get(int(s.lvl), '-')})
@@ -185,7 +187,7 @@ class Bot:
 
     def run(self):
         self.serve_status()                     # first, so the deployment health check passes while history loads
-        telegram.send('Бот запущен. Стратегии (время Дубая):\n' + '\n'.join(
+        telegram.send(f'Бот запущен. Версия {config.VERSION}\nСтратегии (время Дубая):\n' + '\n'.join(
             f'{strat_label(k)} · {STRATEGIES[k]["what"]} · {STRATEGIES[k]["tf"]}m · экспирация {STRATEGIES[k]["expiry"]} мин' for k in config.ENABLED))
         self.load()
         while True:

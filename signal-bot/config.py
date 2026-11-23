@@ -1,5 +1,7 @@
 import os
 
+VERSION = '2026-11-23 (S1 + T1-T4)'
+
 # --- secrets (Replit -> Secrets) ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')

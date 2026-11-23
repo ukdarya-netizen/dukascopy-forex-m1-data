@@ -73,11 +73,12 @@ def _group(t, key, label):
     return out
 
 
-def build(kind, t, title_line, ids):
+def build(kind, t, title_line, ids, tag=''):
+    tags = f'\n\n#report #{kind.lower()}' + (f' #{tag}' if tag else '')
     lines = [f'{kind} REPORT', title_line, 'Стратегии: ' + ', '.join(ids), '']
     if t.empty:
         lines.append('Сделок не было.')
-        return '\n'.join(lines)
+        return '\n'.join(lines) + tags
     s, _, _ = _summary(t)
     lines += ['ИТОГО:'] + s
     t = t.sort_values(['date_dubai', 'entry_dubai', 'strategy'])
@@ -102,7 +103,7 @@ def build(kind, t, title_line, ids):
         lines += ['', 'По парам:'] + _group(t, 'pair', lambda k: config.DISPLAY.get(k, k))
     lines += ['', 'Сделки (время Дубая, цена входа → цена экспирации):']
     lines += [_line(r, kind != 'DAILY') for r in t.itertuples()]
-    return '\n'.join(lines)
+    return '\n'.join(lines) + tags
 
 
 class Scheduler:
@@ -136,7 +137,7 @@ class Scheduler:
                     and not any(k in pending_strategies for k in ids):
                 log = _load_log(); day = f'{sched:%Y-%m-%d}'
                 t = log[(log.date_dubai == day) & log.strategy.isin(ids)]
-                out.append(build('DAILY', t, f'{sd["name"]} · {sched:%d.%m.%Y} {WD[sched.weekday()]} (Дубай)', ids))
+                out.append(build('DAILY', t, f'{sd["name"]} · {sched:%d.%m.%Y} {WD[sched.weekday()]} (Дубай)', ids, sess.lower()))
                 self._mark(key)
         # WEEKLY Saturday 15:00
         sat = now - timedelta(days=(now.weekday() - 5) % 7)
