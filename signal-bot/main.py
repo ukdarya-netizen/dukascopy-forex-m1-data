@@ -20,23 +20,32 @@ def dxb(ms, fmt='%H:%M'):
     return datetime.fromtimestamp(ms / 1000, DXB).strftime(fmt)
 
 
+def strat_icon(sid):
+    st = STRATEGIES.get(sid)
+    return '🧪' if st and st['test'] else '🔔'
+
+
 def strat_label(sid):
     st = STRATEGIES.get(sid)
     if st is None:
         return sid
-    return f'{"🧪 ТЕСТ " if st["test"] else ""}{sid} · {st["name"]}'
+    return f'{strat_icon(sid)} {"ТЕСТ · " if st["test"] else ""}{sid} · {st["name"]}'
+
+
+def dir_text(direction):
+    return '🟢 CALL ⬆️ вверх' if direction == 1 else '🔴 PUT ⬇️ вниз'
 
 
 def signal_text(s):
     st = STRATEGIES[s.strategy]
-    arrow = 'CALL ⬆️ (вверх)' if s.direction == 1 else 'PUT ⬇️ (вниз)'
-    lvl = f' · уровень: {LVL[int(s.lvl)]}' if int(s.lvl) in LVL else ''
-    return (f'🔔 {strat_label(s.strategy)}\n'
-            f'{config.DISPLAY[s.pair]} — {arrow}\n'
-            f'Экспирация: {st["expiry"]} мин\n'
-            f'Вход: сейчас, до {dxb(s.t_entry)} (Дубай)\n'
-            f'Цена сигнала: {config.fmt_price(s.pair, s.price)}\n'
-            f'Логика: {st["what"]} · свеча {st["tf"]}m закрылась {dxb(s.t_close)}{lvl}\n\n'
+    return (f'{strat_label(s.strategy)}\n\n'
+            f'💱 {config.DISPLAY[s.pair]}\n'
+            f'{dir_text(s.direction)}\n'
+            f'⏱ Экспирация: {st["expiry"]} мин\n'
+            f'🕐 Вход: сейчас, до {dxb(s.t_entry)} (Дубай)\n'
+            f'💵 Цена сигнала: {config.fmt_price(s.pair, s.price)}\n\n'
+            f'📊 {st["what"]}\n'
+            f'🕯 Свеча {st["tf"]}m закрылась в {dxb(s.t_close)}\n\n'
             f'#signal #{s.strategy}')
 
 
@@ -148,10 +157,13 @@ class Bot:
             mark = {'WIN': '✅', 'LOSS': '❌', 'TIE': '➖'}.get(res, '?')
             arrow = 'CALL' if s.direction == 1 else 'PUT'
             pp = pips(s.pair, pe, px, s.direction)
-            telegram.send(f'{mark} {res} · {strat_label(s.strategy)}\n'
-                          f'{config.DISPLAY[s.pair]} {arrow} · экспирация {s.expiry} мин\n'
-                          f'Вход {dxb(s.t_entry)}: {config.fmt_price(s.pair, pe)} → экспирация {dxb(s.t_entry + s.expiry * MIN)}: {config.fmt_price(s.pair, px)}\n'
-                          f'Разница: {fmt_pips(pp)} (котировки Dukascopy, mid)\n\n'
+            word = {'WIN': 'WIN — прибыль', 'LOSS': 'LOSS — убыток', 'TIE': 'TIE — возврат ставки'}.get(res, 'нет данных')
+            telegram.send(f'{mark} {word}\n'
+                          f'{strat_label(s.strategy)}\n\n'
+                          f'💱 {config.DISPLAY[s.pair]} · {dir_text(s.direction)}\n'
+                          f'🕐 {dxb(s.t_entry)} → {dxb(s.t_entry + s.expiry * MIN)} (Дубай), экспирация {s.expiry} мин\n'
+                          f'💵 {config.fmt_price(s.pair, pe)} → {config.fmt_price(s.pair, px)}\n'
+                          f'📏 Разница: {fmt_pips(pp)}\n\n'
                           f'#result #{s.strategy} #{res.replace(" ", "_").lower()}')
             save({'date_dubai': day, 'strategy': s.strategy, 'pair': s.pair, 'direction': arrow,
                   'candle_close_dubai': dxb(s.t_close), 'entry_dubai': dxb(s.t_entry), 'expiry_min': s.expiry,
@@ -186,8 +198,13 @@ class Bot:
 
     def run(self):
         self.serve_status()                     # first, so the deployment health check passes while history loads
-        telegram.send(f'Бот запущен. Версия {config.VERSION}\nСтратегии (время Дубая):\n' + '\n'.join(
-            f'{strat_label(k)} · {STRATEGIES[k]["what"]} · {STRATEGIES[k]["tf"]}m · экспирация {STRATEGIES[k]["expiry"]} мин' for k in config.ENABLED))
+        lines = []
+        for k in config.ENABLED:
+            st = STRATEGIES[k]
+            pr = 'все 10 пар' if len(st['pairs']) == len(config.ALL_PAIRS) else ', '.join(config.DISPLAY[p] for p in st['pairs'])
+            lines.append(f'{strat_label(k)}\n   💱 {pr} · 🕯 {st["tf"]}m · ⏱ {st["expiry"]} мин\n   📊 {st["what"]}')
+        telegram.send(f'🚀 Бот запущен\n🏷 Версия {config.VERSION}\n\n📋 Стратегии (время Дубая):\n\n' + '\n\n'.join(lines)
+                      + '\n\n🔔 — основные · 🧪 — тестовые')
         self.load()
         while True:
             try:

@@ -1,6 +1,6 @@
 """DAILY / WEEKLY / MONTHLY reports from data/signals.csv (plain text for Telegram), with statistics per strategy.
 Schedule (Dubai time, UTC+4, no DST):
-  DAILY   - per session (strategy.SESSIONS): A2 at 08:30, A1 at 19:30 Dubai (after the last expiry), Mon-Fri
+  DAILY   - per session (strategy.SESSIONS): morning (A2, B1-B4) at 08:30, evening (A1) at 19:30 Dubai (after the last expiry), Mon-Fri
   WEEKLY  - Saturday 15:00, Dubai dates Sunday..Saturday of that week
   MONTHLY - 1st of month 06:00, previous calendar month
 A report missed because the bot was down is sent late (within 20 h); sent reports are remembered in data/reports_sent.json."""
@@ -29,79 +29,84 @@ def _load_log():
 
 
 def _fp(v):
-    return '- п.' if v is None or v != v else f'{v:+.1f} п.'
+    return '—' if v is None or v != v else f'{v:+.1f} п.'
 
 
-def _summary(t):
-    w = int((t.result == 'WIN').sum()); l = int((t.result == 'LOSS').sum())
-    ti = int((t.result == 'TIE').sum()); nd = int((t.result == 'NO DATA').sum())
-    wr = f'{w / (w + l) * 100:.0f}%' if w + l else '-'
-    lines = [f'Сделок: {len(t)} (WIN {w} / LOSS {l} / TIE {ti}' + (f' / нет данных {nd}' if nd else '') + ')',
-             f'Винрейт: {wr}']
-    # pips of gold (0.1) and currencies are not comparable -> summed separately
-    for nm, part in [('валюты', t[t.pair != 'xauusd']), ('золото', t[t.pair == 'xauusd'])]:
-        if len(part):
-            pw = part.pips_f[part.result == 'WIN'].sum(); pl = part.pips_f[part.result == 'LOSS'].sum()
-            lines.append(f'Пункты, {nm}: {_fp(part.pips_f.sum())} (по WIN {_fp(pw)}, по LOSS {_fp(pl)})')
-    return lines, w, l
+def _wl(t):
+    w = int((t.result == 'WIN').sum()); l = int((t.result == 'LOSS').sum()); ti = int((t.result == 'TIE').sum())
+    nd = int((t.result == 'NO DATA').sum())
+    wr = f'{w / (w + l) * 100:.0f}%' if w + l else '—'
+    return w, l, ti, nd, wr
+
+
+def _pips_txt(t):
+    """Pips: currencies and gold are not comparable -> shown separately."""
+    parts = []
+    fx = t[t.pair != 'xauusd']; au = t[t.pair == 'xauusd']
+    if len(fx): parts.append(f'валюты {_fp(fx.pips_f.sum())}')
+    if len(au): parts.append(f'золото {_fp(au.pips_f.sum())}')
+    return ' · '.join(parts) if parts else '—'
+
+
+def _wr_icon(w, l):
+    if not w + l: return '⚪'
+    x = w / (w + l)
+    return '🟢' if x >= 0.5405 else ('🟡' if x >= 0.5 else '🔴')
 
 
 def _slabel(k):
     st = STRATEGIES.get(k)
-    return f'{k} {st["name"]}{" (тест)" if st["test"] else ""}' if st else k
+    if not st: return k
+    return f'{"🧪" if st["test"] else "🔔"} {k} {st["name"]}'
+
+
+def _summary(t):
+    w, l, ti, nd, wr = _wl(t)
+    return [f'📌 Сделок: {len(t)}   ✅ {w}   ❌ {l}   ➖ {ti}' + (f'   ❔ {nd}' if nd else ''),
+            f'{_wr_icon(w, l)} Винрейт: {wr}  (безубыток при выплате 85% — 54%)',
+            f'📏 Пункты: {_pips_txt(t)}']
+
+
+def _row(g):
+    w, l, ti, nd, wr = _wl(g)
+    return f'{len(g)} сд. · ✅ {w} ❌ {l} · {_wr_icon(w, l)} {wr} · {_pips_txt(g)}'
 
 
 def _line(r, with_date):
+    mark = {'WIN': '✅', 'LOSS': '❌', 'TIE': '➖'}.get(r.result, '❔')
+    arrow = '⬆️' if r.direction == 'CALL' else '⬇️'
     d = ''
     if with_date:
-        dt = datetime.strptime(r.date_dubai, '%Y-%m-%d')
-        d = f'{dt:%d.%m} {WD[dt.weekday()]} '
-    return (f'{d}{r.entry_dubai} [{r.strategy}] {config.DISPLAY.get(r.pair, r.pair)} {r.direction} {r.expiry_min} мин — '
-            f'{r.result} {_fp(r.pips_f)} ({config.fmt_price(r.pair, r.entry_price)} → {config.fmt_price(r.pair, r.expiry_price)})')
-
-
-def _group(t, key, label):
-    out = []
-    for k, g in t.groupby(key, sort=True):
-        w = int((g.result == 'WIN').sum()); l = int((g.result == 'LOSS').sum())
-        wr = f'{w / (w + l) * 100:.0f}%' if w + l else '-'
-        fx = g[g.pair != 'xauusd'].pips_f.sum(); au = g[g.pair == 'xauusd']
-        pp = _fp(fx) if (g.pair != 'xauusd').any() else ''
-        if len(au):
-            pp = (pp + ', ' if pp else '') + f'золото {_fp(au.pips_f.sum())}'
-        out.append(f'{label(k)}: {len(g)} сд., {w}/{l}, {wr}, {pp}')
-    return out
+        dt = datetime.strptime(r.date_dubai, '%Y-%m-%d'); d = f'{dt:%d.%m} {WD[dt.weekday()]} '
+    return (f'{mark} {d}{r.entry_dubai} · {r.strategy} · {config.DISPLAY.get(r.pair, r.pair)} {arrow} · {r.expiry_min} мин · '
+            f'{_fp(r.pips_f)}\n      {config.fmt_price(r.pair, r.entry_price)} → {config.fmt_price(r.pair, r.expiry_price)}')
 
 
 def build(kind, t, title_line, ids, tag=''):
+    head = {'DAILY': '📊 DAILY REPORT', 'WEEKLY': '🗓 WEEKLY REPORT', 'MONTHLY': '📆 MONTHLY REPORT'}[kind]
     tags = f'\n\n#report #{kind.lower()}' + (f' #{tag}' if tag else '')
-    lines = [f'{kind} REPORT', title_line, 'Стратегии: ' + ', '.join(ids), '']
+    lines = [head, f'📅 {title_line}', '']
     if t.empty:
-        lines.append('Сделок не было.')
+        lines += ['💤 Сделок не было.', '', '🧩 Стратегии: ' + ', '.join(ids)]
         return '\n'.join(lines) + tags
-    s, _, _ = _summary(t)
-    lines += ['ИТОГО:'] + s
+    lines += ['🏆 ИТОГО'] + _summary(t) + ['', '🧩 ПО СТРАТЕГИЯМ']
     t = t.sort_values(['date_dubai', 'entry_dubai', 'strategy'])
-    lines += ['', 'По стратегиям:']
     for k in ids:
         g = t[t.strategy == k]
-        if g.empty:
-            lines.append(f'{_slabel(k)}: сделок не было'); continue
-        w = int((g.result == 'WIN').sum()); l = int((g.result == 'LOSS').sum())
-        wr = f'{w / (w + l) * 100:.0f}%' if w + l else '-'
-        fx = g[g.pair != 'xauusd'].pips_f.sum(); au = g[g.pair == 'xauusd']
-        pp = _fp(fx) if (g.pair != 'xauusd').any() else ''
-        if len(au): pp = (pp + ', ' if pp else '') + f'золото {_fp(au.pips_f.sum())}'
-        lines.append(f'{_slabel(k)}: {len(g)} сд., WIN {w} / LOSS {l}, винрейт {wr}, {pp}')
+        lines.append(f'{_slabel(k)}\n      ' + (_row(g) if len(g) else 'сделок не было'))
     if kind in ('WEEKLY', 'MONTHLY'):
-        lines += ['', 'По дням:' if kind == 'WEEKLY' else 'По неделям:']
+        lines += ['', '📆 ПО ДНЯМ' if kind == 'WEEKLY' else '📆 ПО НЕДЕЛЯМ']
         if kind == 'WEEKLY':
-            lines += _group(t, 'date_dubai', lambda k: f'{datetime.strptime(k, "%Y-%m-%d"):%d.%m} {WD[datetime.strptime(k, "%Y-%m-%d").weekday()]}')
+            for k, g in t.groupby('date_dubai', sort=True):
+                dt = datetime.strptime(k, '%Y-%m-%d'); lines.append(f'▫️ {dt:%d.%m} {WD[dt.weekday()]}: {_row(g)}')
         else:
             wk = pd.to_datetime(t.date_dubai).dt.to_period('W-SAT').dt.start_time.dt.strftime('%d.%m')
-            lines += _group(t.assign(wk=wk.values), 'wk', lambda k: f'неделя с {k}')
-        lines += ['', 'По парам:'] + _group(t, 'pair', lambda k: config.DISPLAY.get(k, k))
-    lines += ['', 'Сделки (время Дубая, цена входа → цена экспирации):']
+            for k, g in t.assign(wk=wk.values).groupby('wk', sort=True):
+                lines.append(f'▫️ неделя с {k}: {_row(g)}')
+        lines += ['', '💱 ПО ПАРАМ']
+        for k, g in t.groupby('pair', sort=True):
+            lines.append(f'▫️ {config.DISPLAY.get(k, k)}: {_row(g)}')
+    lines += ['', '📋 СДЕЛКИ (время Дубая, цена входа → цена экспирации)']
     lines += [_line(r, kind != 'DAILY') for r in t.itertuples()]
     return '\n'.join(lines) + tags
 
@@ -137,7 +142,7 @@ class Scheduler:
                     and not any(k in pending_strategies for k in ids):
                 log = _load_log(); day = f'{sched:%Y-%m-%d}'
                 t = log[(log.date_dubai == day) & log.strategy.isin(ids)]
-                out.append(build('DAILY', t, f'{sd["name"]} · {sched:%d.%m.%Y} {WD[sched.weekday()]} (Дубай)', ids, sess.lower()))
+                out.append(build('DAILY', t, f'{sd["name"]} · {sched:%d.%m.%Y}, {WD[sched.weekday()]} (Дубай)', ids, sess.lower()))
                 self._mark(key)
         # WEEKLY Saturday 15:00
         sat = now - timedelta(days=(now.weekday() - 5) % 7)

@@ -1,6 +1,6 @@
 import os
 
-VERSION = '2026-11-25b (A1 + A2, USD/JPY)'
+VERSION = '2026-11-25c (A1 + A2, тест B1–B4, новый формат)'
 
 # --- secrets (Replit -> Secrets) ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
