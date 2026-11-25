@@ -1,6 +1,6 @@
 """DAILY / WEEKLY / MONTHLY reports from data/signals.csv (plain text for Telegram), with statistics per strategy.
 Schedule (Dubai time, UTC+4, no DST):
-  DAILY   - per session: morning (05-09) at 09:30, evening (21-23) at 23:30, Mon-Fri
+  DAILY   - per session (strategy.SESSIONS): A1 at 19:30 Dubai, after the last 60-min expiry, Mon-Fri
   WEEKLY  - Saturday 15:00, Dubai dates Sunday..Saturday of that week
   MONTHLY - 1st of month 06:00, previous calendar month
 A report missed because the bot was down is sent late (within 20 h); sent reports are remembered in data/reports_sent.json."""

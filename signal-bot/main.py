@@ -8,7 +8,7 @@ import logging
 import pandas as pd
 import config, data_feed, telegram
 logging.getLogger('dukascopy').setLevel(logging.WARNING)
-from strategy import scan, STRATEGIES
+from strategy import scan, STRATEGIES, in_window
 from reports import Scheduler
 
 MIN = 60_000
@@ -54,11 +54,10 @@ def fmt_pips(v):
 
 
 def due_strategies(t_close):
-    """Enabled strategies whose candle closes at t_close and whose entry/expiry fit the window."""
+    """Enabled strategies whose candle closes at t_close and whose entry time (close + 1 min) is inside the New York window."""
     te = t_close + MIN
-    um = (te // MIN) % 1440
     return [k for k, st in STRATEGIES.items() if k in config.ENABLED and t_close % (st['tf'] * MIN) == 0
-            and st['start_utc'] <= um < st['end_utc'] and um + st['expiry'] <= st['end_utc']]
+            and bool(in_window([te], st)[0])]
 
 
 def read_log():

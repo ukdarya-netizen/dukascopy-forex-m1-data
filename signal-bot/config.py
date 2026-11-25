@@ -1,15 +1,21 @@
 import os
 
-VERSION = '2026-11-23d (S1 + T1-T8)'
+VERSION = '2026-11-25a (A1: Alligator USD/JPY)'
 
 # --- secrets (Replit -> Secrets) ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 # --- settings ---
+from strategy import STRATEGIES
+
 ALL_PAIRS = ['eurusd', 'gbpusd', 'usdjpy', 'audusd', 'usdcad', 'usdchf', 'nzdusd', 'eurjpy', 'gbpjpy', 'xauusd']
-PAIRS = [p.strip().lower() for p in os.environ.get('PAIRS', ','.join(ALL_PAIRS)).split(',') if p.strip()]
-ENABLED = [{'MORNING': 'S1'}.get(s.strip().upper(), s.strip().upper()) for s in os.environ.get('BOT_STRATEGIES', 'S1,T1,T2,T3,T4,T5,T6,T7,T8').split(',') if s.strip()]
+# strategies: Secret BOT_STRATEGIES (comma list); unknown ids (e.g. old S1/T1-T8) are ignored; nothing valid -> all current strategies
+ENABLED = [s.strip().upper() for s in os.environ.get('BOT_STRATEGIES', '').split(',') if s.strip().upper() in STRATEGIES] or list(STRATEGIES)
+# pairs: only those the enabled strategies trade (optionally narrowed by Secret PAIRS)
+_need = [p for p in ALL_PAIRS if any(p in STRATEGIES[k]['pairs'] for k in ENABLED)]
+_env = [p.strip().lower() for p in os.environ.get('PAIRS', '').split(',') if p.strip()]
+PAIRS = [p for p in _need if p in _env] or _need
 
 HISTORY_DAYS = 35          # history kept in memory (needs >= 20 trading days for the ATR average; 30 and 35 days validated identical to the full-history backtest)
 CANDLE_WAIT_SEC = 4        # wait after minute close before polling (let the feed finish the minute)
